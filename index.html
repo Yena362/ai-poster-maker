@@ -298,14 +298,15 @@ $("tab-single").onclick=()=>setTab(false);$("tab-batch").onclick=()=>setTab(true
 /* ---------- 저장 ---------- */
 function toast(m){const t=$("toast");t.textContent=m;t.hidden=false;clearTimeout(t._h);t._h=setTimeout(()=>t.hidden=true,2600)}
 function fname(s){return (s||"poster").replace(/[\\/:*?"<>|]/g,"").trim().slice(0,60)||"poster"}
-async function save(filename,data){const blob=data instanceof Blob?data:new Blob([data]);const url=URL.createObjectURL(blob);
+async function save(filename,data,usage){const blob=data instanceof Blob?data:new Blob([data]);const url=URL.createObjectURL(blob);
   const a=document.createElement("a");a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();
+  if(usage)recordUsage("download_requested",usage);
   setTimeout(()=>URL.revokeObjectURL(url),4000);toast("저장했어요: "+filename)}
 const toBlob=(cv,type,q)=>new Promise(r=>cv.toBlob(r,type,q));
 function pdfOf(canvases){const {jsPDF}=window.jspdf;const doc=new jsPDF({unit:"mm",format:"a4"});
   canvases.forEach((cv,i)=>{if(i)doc.addPage();doc.addImage(cv.toDataURL("image/jpeg",.93),"JPEG",0,0,210,297)});return doc.output("blob")}
-$("b-png").onclick=async()=>{const cv=$("cv");drawPoster(cv,singleData(),theme,charImg);save(fname($("f-title").value)+".png",await toBlob(cv,"image/png"))};
-$("b-pdf").onclick=()=>{const cv=$("cv");drawPoster(cv,singleData(),theme,charImg);save(fname($("f-title").value)+".pdf",pdfOf([cv]))};
+$("b-png").onclick=async()=>{const cv=$("cv");drawPoster(cv,singleData(),theme,charImg);save(fname($("f-title").value)+".png",await toBlob(cv,"image/png"),downloadDetails("png","single"))};
+$("b-pdf").onclick=()=>{const cv=$("cv");drawPoster(cv,singleData(),theme,charImg);save(fname($("f-title").value)+".pdf",pdfOf([cv]),downloadDetails("pdf","single"))};
 
 /* ---------- 일괄 ---------- */
 function parseBatch(){return $("f-batch").value.split("\n").map(l=>l.split("|").map(s=>s.trim())).filter(p=>p[0]&&p[1]).map(p=>({title:p[0],url:p[1],cap:p[2]||""}))}
@@ -321,10 +322,34 @@ function buildBatch(){const items=parseBatch();if(!items.length)return toast("�
   $("batch-actions").hidden=false;$("batch-actions").style.display="flex";toast(`${items.length}장을 만들었어요`)}
 function refreshBatch(){if(batchItems.length)buildBatch()}
 $("b-batch").onclick=buildBatch;
-$("b-batch-pdf").onclick=()=>{if(!batchItems.length)return;save("QR포스터_"+batchItems.length+"장.pdf",pdfOf(batchItems.map(makeCanvas)))};
+$("b-batch-pdf").onclick=()=>{if(!batchItems.length)return;save("QR포스터_"+batchItems.length+"장.pdf",pdfOf(batchItems.map(makeCanvas)),downloadDetails("pdf","batch"))};
 $("b-batch-zip").onclick=async()=>{if(!batchItems.length)return;const z=new JSZip();
   for(let i=0;i<batchItems.length;i++){const cv=makeCanvas(batchItems[i]);z.file(String(i+1).padStart(2,"0")+"_"+fname(batchItems[i].title)+".png",await toBlob(cv,"image/png"))}
-  save("QR포스터_PNG_"+batchItems.length+"장.zip",await z.generateAsync({type:"blob"}))};
+  save("QR포스터_PNG_"+batchItems.length+"장.zip",await z.generateAsync({type:"blob"}),downloadDetails("zip","batch"))};
+
+/* ---------- 사용 기록: 비밀키 없이 같은 사이트의 서버에 보고 ---------- */
+let usageSessionId;
+try {
+  usageSessionId=sessionStorage.getItem("poster-usage-session");
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(usageSessionId||"")){
+    usageSessionId=crypto.randomUUID();sessionStorage.setItem("poster-usage-session",usageSessionId);
+  }
+} catch { try { usageSessionId=crypto.randomUUID(); } catch {} }
+function recordUsage(event,details={}){
+  if(!usageSessionId || !/^https:$/.test(location.protocol))return;
+  try {
+    fetch("/api/usage",{method:"POST",headers:{"Content-Type":"application/json"},
+      credentials:"same-origin",keepalive:true,
+      body:JSON.stringify({event,eventId:crypto.randomUUID(),sessionId:usageSessionId,...details})
+    }).then(response=>{if(!response.ok)console.warn("사용 기록 저장을 건너뛰었습니다:",response.status)}).catch(()=>{});
+  } catch {} // 기록 오류가 포스터 저장을 막지 않음
+}
+function downloadDetails(format,mode){
+  const items=mode==="batch"?batchItems:[singleData()];
+  return {format,mode,posterCount:items.length,theme:theme.name,
+    titles:items.slice(0,10).map(item=>String(item.title||"").slice(0,120))};
+}
+recordUsage("page_view");
 
 /* ---------- 시작 ---------- */
 render();
@@ -333,5 +358,6 @@ Promise.all([document.fonts.load("100px Jua"),document.fonts.load("800 34px 'Not
 document.fonts.ready.then(render);
 </script>
 
+<p style="max-width:960px;margin:16px auto;padding:0 20px;color:var(--muted);font:12px/1.6 var(--ui)">서비스 운영을 위해 방문·다운로드 이력과 포스터 제목을 기록합니다. 링크와 이미지는 전송하지 않습니다.</p>
 </body>
 </html>
